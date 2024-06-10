@@ -109,7 +109,7 @@
                 }
 
                 if (neighbors.length > 0) {
-                    neighbors.sort(() => Math.random() - 0.5); // Zufällige Sortierung
+                    neighbors.sort(() => Math.random() - 0.5); // Randomize neighbors
                     return neighbors;
                 } else {
                     return [];
@@ -153,9 +153,9 @@
 
                 const neighbors = current.checkNeighbors();
                 if (neighbors.length > 0) {
-                    // Mit einer höheren Wahrscheinlichkeit die erste Hälfte der Nachbarn besuchen
+                    // Bias to choose neighbors from the first half more often
                     let next;
-                    if (Math.random() > 0.3) {
+                    if (Math.random() > 0.2) {
                         next = neighbors[Math.floor(Math.random() * Math.ceil(neighbors.length / 2))];
                     } else {
                         next = neighbors[Math.floor(Math.random() * neighbors.length)];
