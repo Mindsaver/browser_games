@@ -7,6 +7,7 @@
     <style>
         body {
             display: flex;
+            flex-direction: column;
             justify-content: center;
             align-items: center;
             height: 100vh;
@@ -15,14 +16,22 @@
         }
         canvas {
             border: 2px solid black;
+            margin-bottom: 10px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
         }
     </style>
 </head>
 <body>
     <canvas id="mazeCanvas"></canvas>
+    <button id="printButton">Drucken</button>
     <script>
         const canvas = document.getElementById('mazeCanvas');
         const ctx = canvas.getContext('2d');
+        const printButton = document.getElementById('printButton');
 
         let cols, rows, cellSize;
         let grid = [];
@@ -77,7 +86,7 @@
                 }
 
                 if (this === start) {
-                    ctx.fillStyle = 'green';
+                    ctx.fillStyle = 'lightgreen';
                     ctx.fillRect(x, y, cellSize, cellSize);
                 }
 
@@ -293,6 +302,13 @@
         window.addEventListener('resize', resizeCanvas);
 
         resizeCanvas();
+
+        printButton.addEventListener('click', () => {
+            const dataUrl = canvas.toDataURL();
+            const printWindow = window.open('', '_blank');
+            printWindow.document.write(`<img src="${dataUrl}" onload="window.print();window.close()">`);
+            printWindow.document.close();
+        });
     </script>
 </body>
 </html>
