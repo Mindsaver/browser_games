@@ -26,7 +26,7 @@
 
         let cols, rows, cellSize;
         let grid = [];
-        let walls = [];
+        let stack = [];
 
         let start = null;
         let end = null;
@@ -71,6 +71,11 @@
                     ctx.stroke();
                 }
 
+                if (this.visited) {
+                    ctx.fillStyle = 'lightblue';
+                    ctx.fillRect(x, y, cellSize, cellSize);
+                }
+
                 if (this === start) {
                     ctx.fillStyle = 'green';
                     ctx.fillRect(x, y, cellSize, cellSize);
@@ -79,6 +84,35 @@
                 if (this === end) {
                     ctx.fillStyle = 'red';
                     ctx.fillRect(x, y, cellSize, cellSize);
+                }
+            }
+
+            checkNeighbors() {
+                let neighbors = [];
+
+                const top = grid[index(this.col, this.row - 1)];
+                const right = grid[index(this.col + 1, this.row)];
+                const bottom = grid[index(this.col, this.row + 1)];
+                const left = grid[index(this.col - 1, this.row)];
+
+                if (top && !top.visited) {
+                    neighbors.push(top);
+                }
+                if (right && !right.visited) {
+                    neighbors.push(right);
+                }
+                if (bottom && !bottom.visited) {
+                    neighbors.push(bottom);
+                }
+                if (left && !left.visited) {
+                    neighbors.push(left);
+                }
+
+                if (neighbors.length > 0) {
+                    neighbors.sort(() => Math.random() - 0.5); // Randomize neighbors
+                    return neighbors;
+                } else {
+                    return [];
                 }
             }
         }
@@ -92,7 +126,7 @@
 
         function setup() {
             grid = [];
-            walls = [];
+            stack = [];
             cols = Math.floor(canvas.width / cellSize);
             rows = Math.floor(canvas.height / cellSize);
 
@@ -103,54 +137,34 @@
                 }
             }
 
-            start = grid[0];
-            end = grid[grid.length - 1];
-
-            let initialCell = grid[Math.floor(Math.random() * grid.length)];
-            initialCell.visited = true;
-
-            addWalls(initialCell);
+            start = grid[Math.floor(Math.random() * grid.length)];
+            start.visited = true;
+            end = grid[Math.floor(Math.random() * grid.length)];
+            stack.push(start);
 
             drawMaze();
             draw();
         }
 
-        function addWalls(cell) {
-            const col = cell.col;
-            const row = cell.row;
-            const directions = ['top', 'right', 'bottom', 'left'];
-
-            for (let dir of directions) {
-                let neighbor = null;
-                if (dir === 'top' && row > 0) {
-                    neighbor = grid[index(col, row - 1)];
-                } else if (dir === 'right' && col < cols - 1) {
-                    neighbor = grid[index(col + 1, row)];
-                } else if (dir === 'bottom' && row < rows - 1) {
-                    neighbor = grid[index(col, row + 1)];
-                } else if (dir === 'left' && col > 0) {
-                    neighbor = grid[index(col - 1, row)];
-                }
-
-                if (neighbor && !neighbor.visited) {
-                    walls.push({ cell: cell, neighbor: neighbor, direction: dir });
-                }
-            }
-        }
-
         function drawMaze() {
-            while (walls.length > 0) {
-                const randomIndex = Math.floor(Math.random() * walls.length);
-                const { cell, neighbor, direction } = walls.splice(randomIndex, 1)[0];
+            while (stack.length > 0) {
+                const current = stack[stack.length - 1];
+                current.visited = true;
 
-                if (!neighbor.visited) {
-                    neighbor.visited = true;
-                    cell.walls[direction] = false;
-                    if (direction === 'top') neighbor.walls.bottom = false;
-                    if (direction === 'right') neighbor.walls.left = false;
-                    if (direction === 'bottom') neighbor.walls.top = false;
-                    if (direction === 'left') neighbor.walls.right = false;
-                    addWalls(neighbor);
+                const neighbors = current.checkNeighbors();
+                if (neighbors.length > 0) {
+                    let next;
+                    if (Math.random() > 0.5) {
+                        next = neighbors[Math.floor(Math.random() * Math.ceil(neighbors.length / 2))];
+                    } else {
+                        next = neighbors[Math.floor(Math.random() * neighbors.length)];
+                    }
+                    next.visited = true;
+                    stack.push(next);
+
+                    removeWalls(current, next);
+                } else if (stack.length > 0) {
+                    stack.pop();
                 }
             }
         }
@@ -160,6 +174,27 @@
 
             for (let cell of grid) {
                 cell.draw();
+            }
+        }
+
+        function removeWalls(a, b) {
+            const x = a.col - b.col;
+            const y = a.row - b.row;
+
+            if (x === 1) {
+                a.walls.left = false;
+                b.walls.right = false;
+            } else if (x === -1) {
+                a.walls.right = false;
+                b.walls.left = false;
+            }
+
+            if (y === 1) {
+                a.walls.top = false;
+                b.walls.bottom = false;
+            } else if (y === -1) {
+                a.walls.bottom = false;
+                b.walls.top = false;
             }
         }
 
