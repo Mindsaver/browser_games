@@ -19,15 +19,12 @@
     </style>
 </head>
 <body>
-    <canvas id="mazeCanvas" width="500" height="500"></canvas>
+    <canvas id="mazeCanvas"></canvas>
     <script>
         const canvas = document.getElementById('mazeCanvas');
         const ctx = canvas.getContext('2d');
 
-        const cols = 30;
-        const rows = 30;
-        const cellSize = canvas.width / cols;
-
+        let cols, rows, cellSize;
         let grid = [];
         let stack = [];
 
@@ -128,6 +125,11 @@
         }
 
         function setup() {
+            grid = [];
+            stack = [];
+            cols = Math.floor(canvas.width / cellSize);
+            rows = Math.floor(canvas.height / cellSize);
+
             for (let row = 0; row < rows; row++) {
                 for (let col = 0; col < cols; col++) {
                     let cell = new Cell(col, row);
@@ -139,6 +141,9 @@
             start.visited = true;
             end = grid[grid.length - 1];
             stack.push(start);
+
+            drawMaze();
+            draw();
         }
 
         function drawMaze() {
@@ -279,9 +284,16 @@
         canvas.addEventListener('click', handleClick);
         canvas.addEventListener('touchstart', handleClick);
 
-        setup();
-        drawMaze();
-        draw();
+        function resizeCanvas() {
+            canvas.width = window.innerWidth * 0.8;
+            canvas.height = window.innerHeight * 0.8;
+            cellSize = Math.min(canvas.width, canvas.height) / 20;
+            setup();
+        }
+
+        window.addEventListener('resize', resizeCanvas);
+
+        resizeCanvas();
     </script>
 </body>
 </html>
