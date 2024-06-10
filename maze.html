@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Maze Game</title>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #f0f0f0;
+        }
+        canvas {
+            border: 2px solid black;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="mazeCanvas" width="500" height="500"></canvas>
+    <script>
+        const canvas = document.getElementById('mazeCanvas');
+        const ctx = canvas.getContext('2d');
+
+        const cols = 30;
+        const rows = 30;
+        const cellSize = canvas.width / cols;
+
+        let grid = [];
+        let stack = [];
+
+        let start = null;
+        let end = null;
+
+        class Cell {
+            constructor(col, row) {
+                this.col = col;
+                this.row = row;
+                this.visited = false;
+                this.walls = { top: true, right: true, bottom: true, left: true };
+            }
+
+            draw() {
+                const x = this.col * cellSize;
+                const y = this.row * cellSize;
+
+                ctx.strokeStyle = 'black';
+                ctx.lineWidth = 2;
+
+                if (this.walls.top) {
+                    ctx.beginPath();
+                    ctx.moveTo(x, y);
+                    ctx.lineTo(x + cellSize, y);
+                    ctx.stroke();
+                }
+                if (this.walls.right) {
+                    ctx.beginPath();
+                    ctx.moveTo(x + cellSize, y);
+                    ctx.lineTo(x + cellSize, y + cellSize);
+                    ctx.stroke();
+                }
+                if (this.walls.bottom) {
+                    ctx.beginPath();
+                    ctx.moveTo(x + cellSize, y + cellSize);
+                    ctx.lineTo(x, y + cellSize);
+                    ctx.stroke();
+                }
+                if (this.walls.left) {
+                    ctx.beginPath();
+                    ctx.moveTo(x, y + cellSize);
+                    ctx.lineTo(x, y);
+                    ctx.stroke();
+                }
+
+                if (this.visited) {
+                    ctx.fillStyle = 'lightblue';
+                    ctx.fillRect(x, y, cellSize, cellSize);
+                }
+
+                if (this === start) {
+                    ctx.fillStyle = 'green';
+                    ctx.fillRect(x, y, cellSize, cellSize);
+                }
+
+                if (this === end) {
+                    ctx.fillStyle = 'red';
+                    ctx.fillRect(x, y, cellSize, cellSize);
+                }
+            }
+
+            checkNeighbors() {
+                let neighbors = [];
+
+                const top = grid[index(this.col, this.row - 1)];
+                const right = grid[index(this.col + 1, this.row)];
+                const bottom = grid[index(this.col, this.row + 1)];
+                const left = grid[index(this.col - 1, this.row)];
+
+                if (top && !top.visited) {
+                    neighbors.push(top);
+                }
+                if (right && !right.visited) {
+                    neighbors.push(right);
+                }
+                if (bottom && !bottom.visited) {
+                    neighbors.push(bottom);
+                }
+                if (left && !left.visited) {
+                    neighbors.push(left);
+                }
+
+                if (neighbors.length > 0) {
+                    neighbors.sort(() => Math.random() - 0.5); // Zufällige Sortierung
+                    return neighbors;
+                } else {
+                    return [];
+                }
+            }
+        }
+
+        function index(col, row) {
+            if (col < 0 || row < 0 || col >= cols || row >= rows) {
+                return -1;
+            }
+            return col + row * cols;
+        }
+
+        function setup() {
+            for (let row = 0; row < rows; row++) {
+                for (let col = 0; col < cols; col++) {
+                    let cell = new Cell(col, row);
+                    grid.push(cell);
+                }
+            }
+
+            start = grid[0];
+            start.visited = true;
+            end = grid[grid.length - 1];
+            stack.push(start);
+        }
+
+        function drawMaze() {
+            while (stack.length > 0) {
+                const current = stack[stack.length - 1];
+                current.visited = true;
+
+                const neighbors = current.checkNeighbors();
+                if (neighbors.length > 0) {
+                    // Mit einer höheren Wahrscheinlichkeit die erste Hälfte der Nachbarn besuchen
+                    let next;
+                    if (Math.random() > 0.3) {
+                        next = neighbors[Math.floor(Math.random() * Math.ceil(neighbors.length / 2))];
+                    } else {
+                        next = neighbors[Math.floor(Math.random() * neighbors.length)];
+                    }
+                    next.visited = true;
+                    stack.push(next);
+
+                    removeWalls(current, next);
+                } else if (stack.length > 0) {
+                    stack.pop();
+                }
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            for (let cell of grid) {
+                cell.draw();
+            }
+        }
+
+        function removeWalls(a, b) {
+            const x = a.col - b.col;
+            const y = a.row - b.row;
+
+            if (x === 1) {
+                a.walls.left = false;
+                b.walls.right = false;
+            } else if (x === -1) {
+                a.walls.right = false;
+                b.walls.left = false;
+            }
+
+            if (y === 1) {
+                a.walls.top = false;
+                b.walls.bottom = false;
+            } else if (y === -1) {
+                a.walls.bottom = false;
+                b.walls.top = false;
+            }
+        }
+
+        function findPath(start, end) {
+            let openSet = [start];
+            let cameFrom = new Map();
+
+            let gScore = new Map(grid.map(cell => [cell, Infinity]));
+            gScore.set(start, 0);
+
+            let fScore = new Map(grid.map(cell => [cell, Infinity]));
+            fScore.set(start, heuristic(start, end));
+
+            while (openSet.length > 0) {
+                openSet.sort((a, b) => fScore.get(a) - fScore.get(b));
+                let current = openSet.shift();
+
+                if (current === end) {
+                    let totalPath = [current];
+                    while (cameFrom.has(current)) {
+                        current = cameFrom.get(current);
+                        totalPath.push(current);
+                    }
+                    return totalPath.reverse();
+                }
+
+                let neighbors = getNeighbors(current);
+                for (let neighbor of neighbors) {
+                    let tentative_gScore = gScore.get(current) + 1;
+                    if (tentative_gScore < gScore.get(neighbor)) {
+                        cameFrom.set(neighbor, current);
+                        gScore.set(neighbor, tentative_gScore);
+                        fScore.set(neighbor, gScore.get(neighbor) + heuristic(neighbor, end));
+                        if (!openSet.includes(neighbor)) {
+                            openSet.push(neighbor);
+                        }
+                    }
+                }
+            }
+
+            return [];
+        }
+
+        function heuristic(a, b) {
+            return Math.abs(a.col - b.col) + Math.abs(a.row - b.row);
+        }
+
+        function getNeighbors(cell) {
+            let neighbors = [];
+
+            const top = grid[index(cell.col, cell.row - 1)];
+            const right = grid[index(cell.col + 1, cell.row)];
+            const bottom = grid[index(cell.col, cell.row + 1)];
+            const left = grid[index(cell.col - 1, cell.row)];
+
+            if (top && !cell.walls.top && !top.walls.bottom) neighbors.push(top);
+            if (right && !cell.walls.right && !right.walls.left) neighbors.push(right);
+            if (bottom && !cell.walls.bottom && !bottom.walls.top) neighbors.push(bottom);
+            if (left && !cell.walls.left && !left.walls.right) neighbors.push(left);
+
+            return neighbors;
+        }
+
+        function drawPath(path) {
+            if (path.length > 1) {
+                ctx.strokeStyle = 'yellow';
+                ctx.lineWidth = 2;
+
+                ctx.beginPath();
+                ctx.moveTo(path[0].col * cellSize + cellSize / 2, path[0].row * cellSize + cellSize / 2);
+
+                for (let i = 1; i < path.length; i++) {
+                    const x = path[i].col * cellSize + cellSize / 2;
+                    const y = path[i].row * cellSize + cellSize / 2;
+                    ctx.lineTo(x, y);
+                }
+
+                ctx.stroke();
+            }
+        }
+
+        function handleClick() {
+            drawPath(findPath(start, end));
+        }
+
+        canvas.addEventListener('click', handleClick);
+        canvas.addEventListener('touchstart', handleClick);
+
+        setup();
+        drawMaze();
+        draw();
+    </script>
+</body>
+</html>
