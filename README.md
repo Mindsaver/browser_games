@@ -1,4 +1,4 @@
 # browser_games
 
-[Maze](/eat_points/index.html)
-[Eat Points](/maze2.html)
+- [Maze](/maze2.html) 
+- [Eat Points](/eat_points/index.html)
