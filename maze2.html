@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Maze Game</title>
     <style>
         body {
@@ -455,26 +456,36 @@
         });
 
         function handleClickOrTouch(event) {
+            event.preventDefault();
             const rect = canvas.getBoundingClientRect();
-            const clickX = event.clientX - rect.left || event.touches[0].clientX - rect.left;
-            const clickY = event.clientY - rect.top || event.touches[0].clientY - rect.top;
+            const clientX = event.clientX || event.touches[0].clientX;
+            const clientY = event.clientY || event.touches[0].clientY;
+            const clickX = clientX - rect.left;
+            const clickY = clientY - rect.top;
 
             const playerCenterX = player.x * cellSize + cellSize / 2;
             const playerCenterY = player.y * cellSize + cellSize / 2;
 
-            if (clickY < playerCenterY - cellSize / 2) {
-                handleMove('up');
-            } else if (clickX > playerCenterX + cellSize / 2) {
-                handleMove('right');
-            } else if (clickY > playerCenterY + cellSize / 2) {
-                handleMove('down');
-            } else if (clickX < playerCenterX - cellSize / 2) {
-                handleMove('left');
+            const deltaX = clickX - playerCenterX;
+            const deltaY = clickY - playerCenterY;
+
+            if (Math.abs(deltaX) > Math.abs(deltaY)) {
+                if (deltaX > 0) {
+                    handleMove('right');
+                } else {
+                    handleMove('left');
+                }
+            } else {
+                if (deltaY > 0) {
+                    handleMove('down');
+                } else {
+                    handleMove('up');
+                }
             }
         }
 
         canvas.addEventListener('click', handleClickOrTouch);
-        canvas.addEventListener('touchstart', handleClickOrTouch);
+        canvas.addEventListener('touchstart', handleClickOrTouch, { passive: false });
 
         newGameButton.addEventListener('click', setup);
 
