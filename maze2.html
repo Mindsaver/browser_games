@@ -22,23 +22,44 @@
             padding: 10px 20px;
             font-size: 16px;
             cursor: pointer;
+            margin-bottom: 10px;
+        }
+        @media print {
+            body, html {
+                width: 100%;
+                height: 100%;
+                display: flex;
+                justify-content: center;
+                align-items: center;
+                margin: 0;
+                padding: 0;
+            }
+            canvas {
+                width: 100% !important;
+                height: auto !important;
+                border: none;
+            }
         }
     </style>
 </head>
 <body>
     <canvas id="mazeCanvas"></canvas>
+    <button id="toggleSolutionButton">Toggle Lösung</button>
     <button id="printButton">Drucken</button>
     <script>
         const canvas = document.getElementById('mazeCanvas');
         const ctx = canvas.getContext('2d');
         const printButton = document.getElementById('printButton');
+        const toggleSolutionButton = document.getElementById('toggleSolutionButton');
 
         let cols, rows, cellSize;
         let grid = [];
         let stack = [];
+        let path = [];
 
         let start = null;
         let end = null;
+        let solutionVisible = false;
 
         class Cell {
             constructor(col, row) {
@@ -53,7 +74,7 @@
                 const y = this.row * cellSize;
 
                 ctx.strokeStyle = 'black';
-                ctx.lineWidth = 2;
+                ctx.lineWidth = 3;
 
                 if (this.walls.top) {
                     ctx.beginPath();
@@ -81,7 +102,7 @@
                 }
 
                 if (this.visited) {
-                    ctx.fillStyle = 'lightblue';
+                    ctx.fillStyle = 'white';
                     ctx.fillRect(x, y, cellSize, cellSize);
                 }
 
@@ -91,7 +112,7 @@
                 }
 
                 if (this === end) {
-                    ctx.fillStyle = 'red';
+                    ctx.fillStyle = 'orange';
                     ctx.fillRect(x, y, cellSize, cellSize);
                 }
             }
@@ -136,6 +157,7 @@
         function setup() {
             grid = [];
             stack = [];
+            path = [];
             cols = Math.floor(canvas.width / cellSize);
             rows = Math.floor(canvas.height / cellSize);
 
@@ -176,6 +198,7 @@
                     stack.pop();
                 }
             }
+            path = findPath(start, end);
         }
 
         function draw() {
@@ -183,6 +206,15 @@
 
             for (let cell of grid) {
                 cell.draw();
+            }
+
+            // Draw the outer walls
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = 'black';
+            ctx.strokeRect(0, 0, canvas.width, canvas.height);
+
+            if (solutionVisible) {
+                drawPath(path);
             }
         }
 
@@ -269,7 +301,7 @@
 
         function drawPath(path) {
             if (path.length > 1) {
-                ctx.strokeStyle = 'yellow';
+                ctx.strokeStyle = 'red';
                 ctx.lineWidth = 2;
 
                 ctx.beginPath();
@@ -285,12 +317,13 @@
             }
         }
 
-        function handleClick() {
-            drawPath(findPath(start, end));
+        function toggleSolution() {
+            solutionVisible = !solutionVisible;
+            toggleSolutionButton.textContent = solutionVisible ? 'Lösung Ausblenden' : 'Lösung Anzeigen';
+            draw();
         }
 
-        canvas.addEventListener('click', handleClick);
-        canvas.addEventListener('touchstart', handleClick);
+        toggleSolutionButton.addEventListener('click', toggleSolution);
 
         function resizeCanvas() {
             canvas.width = window.innerWidth * 0.8;
@@ -306,7 +339,31 @@
         printButton.addEventListener('click', () => {
             const dataUrl = canvas.toDataURL();
             const printWindow = window.open('', '_blank');
-            printWindow.document.write(`<img src="${dataUrl}" onload="window.print();window.close()">`);
+            printWindow.document.write(`
+                <html>
+                    <head>
+                        <title>Drucken</title>
+                        <style>
+                            body, html {
+                                width: 100%;
+                                height: 100%;
+                                display: flex;
+                                justify-content: center;
+                                align-items: center;
+                                margin: 0;
+                                padding: 0;
+                            }
+                            img {
+                                max-width: 100%;
+                                height: auto;
+                            }
+                        </style>
+                    </head>
+                    <body>
+                        <img src="${dataUrl}" onload="window.print();window.close()">
+                    </body>
+                </html>
+            `);
             printWindow.document.close();
         });
     </script>
