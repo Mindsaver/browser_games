@@ -1,8 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="viewport" content="width=device-width, initial-scale=1.0">
     <title>Maze Game</title>
     <style>
         body {
@@ -24,6 +23,20 @@
             cursor: pointer;
             margin-bottom: 10px;
         }
+        #winModal {
+            display: none;
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: white;
+            padding: 20px;
+            box-shadow: 0px 0px 10px rgba(0, 0, 0, 0.1);
+            z-index: 1000;
+        }
+        #winModal button {
+            margin-top: 10px;
+        }
         @media print {
             body, html {
                 width: 100%;
@@ -44,13 +57,19 @@
 </head>
 <body>
     <canvas id="mazeCanvas"></canvas>
-    <button id="toggleSolutionButton">Toggle Lösung</button>
+	<!--<button id="toggleSolutionButton">Toggle Lösung</button>-->
     <button id="printButton">Drucken</button>
+    <div id="winModal">
+        <p>Congratulations! You reached the end!</p>
+        <button id="newGameButton">Play Again</button>
+    </div>
     <script>
         const canvas = document.getElementById('mazeCanvas');
         const ctx = canvas.getContext('2d');
         const printButton = document.getElementById('printButton');
-        const toggleSolutionButton = document.getElementById('toggleSolutionButton');
+       // const toggleSolutionButton = document.getElementById('toggleSolutionButton');
+        const winModal = document.getElementById('winModal');
+        const newGameButton = document.getElementById('newGameButton');
 
         let cols, rows, cellSize;
         let grid = [];
@@ -60,6 +79,9 @@
         let start = null;
         let end = null;
         let solutionVisible = false;
+        let gameWon = false;
+
+        let player = { x: 0, y: 0, path: [] };
 
         class Cell {
             constructor(col, row) {
@@ -173,6 +195,12 @@
             end = grid[Math.floor(Math.random() * grid.length)];
             stack.push(start);
 
+            player.x = start.col;
+            player.y = start.row;
+            player.path = [{ x: player.x, y: player.y }];
+            gameWon = false;
+            winModal.style.display = 'none';
+
             drawMaze();
             draw();
         }
@@ -207,6 +235,9 @@
             for (let cell of grid) {
                 cell.draw();
             }
+
+            drawPlayer();
+            drawPlayerPath();
 
             // Draw the outer walls
             ctx.lineWidth = 3;
@@ -319,11 +350,11 @@
 
         function toggleSolution() {
             solutionVisible = !solutionVisible;
-            toggleSolutionButton.textContent = solutionVisible ? 'Lösung Ausblenden' : 'Lösung Anzeigen';
+           // toggleSolutionButton.textContent = solutionVisible ? 'Lösung Ausblenden' : 'Lösung Anzeigen';
             draw();
         }
 
-        toggleSolutionButton.addEventListener('click', toggleSolution);
+   //     toggleSolutionButton.addEventListener('click', toggleSolution);
 
         function resizeCanvas() {
             canvas.width = window.innerWidth * 0.8;
@@ -335,6 +366,117 @@
         window.addEventListener('resize', resizeCanvas);
 
         resizeCanvas();
+
+        function drawPlayer() {
+            ctx.fillStyle = 'blue';
+            ctx.beginPath();
+            ctx.arc(player.x * cellSize + cellSize / 2, player.y * cellSize + cellSize / 2, cellSize / 4, 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        function drawPlayerPath() {
+            ctx.strokeStyle = 'blue';
+            ctx.lineWidth = 2;
+
+            ctx.beginPath();
+            ctx.moveTo(player.path[0].x * cellSize + cellSize / 2, player.path[0].y * cellSize + cellSize / 2);
+
+            for (let i = 1; i < player.path.length; i++) {
+                const x = player.path[i].x * cellSize + cellSize / 2;
+                const y = player.path[i].y * cellSize + cellSize / 2;
+                ctx.lineTo(x, y);
+            }
+
+            ctx.stroke();
+        }
+
+        function checkWin() {
+            if (player.x === end.col && player.y === end.row) {
+                gameWon = true;
+                winModal.style.display = 'block';
+            }
+        }
+
+        function handleMove(direction) {
+            if (gameWon) return;
+
+            let moved = false;
+            switch (direction) {
+                case 'up':
+                    if (!grid[index(player.x, player.y)].walls.top && !grid[index(player.x, player.y - 1)].walls.bottom) {
+                        player.y -= 1;
+                        moved = true;
+                    }
+                    break;
+                case 'right':
+                    if (!grid[index(player.x, player.y)].walls.right && !grid[index(player.x + 1, player.y)].walls.left) {
+                        player.x += 1;
+                        moved = true;
+                    }
+                    break;
+                case 'down':
+                    if (!grid[index(player.x, player.y)].walls.bottom && !grid[index(player.x, player.y + 1)].walls.top) {
+                        player.y += 1;
+                        moved = true;
+                    }
+                    break;
+                case 'left':
+                    if (!grid[index(player.x, player.y)].walls.left && !grid[index(player.x - 1, player.y)].walls.right) {
+                        player.x -= 1;
+                        moved = true;
+                    }
+                    break;
+            }
+            if (moved) {
+                player.path.push({ x: player.x, y: player.y });
+                draw();
+                checkWin();
+            }
+        }
+
+        window.addEventListener('keydown', (e) => {
+            switch (e.key) {
+                case 'ArrowUp':
+                    handleMove('up');
+                    break;
+                case 'ArrowRight':
+                    handleMove('right');
+                    break;
+                case 'ArrowDown':
+                    handleMove('down');
+                    break;
+                case 'ArrowLeft':
+                    handleMove('left');
+                    break;
+				case 'l':
+                    toggleSolution();
+                    break;
+            }
+        });
+
+        function handleClickOrTouch(event) {
+            const rect = canvas.getBoundingClientRect();
+            const clickX = event.clientX - rect.left || event.touches[0].clientX - rect.left;
+            const clickY = event.clientY - rect.top || event.touches[0].clientY - rect.top;
+
+            const playerCenterX = player.x * cellSize + cellSize / 2;
+            const playerCenterY = player.y * cellSize + cellSize / 2;
+
+            if (clickY < playerCenterY - cellSize / 2) {
+                handleMove('up');
+            } else if (clickX > playerCenterX + cellSize / 2) {
+                handleMove('right');
+            } else if (clickY > playerCenterY + cellSize / 2) {
+                handleMove('down');
+            } else if (clickX < playerCenterX - cellSize / 2) {
+                handleMove('left');
+            }
+        }
+
+        canvas.addEventListener('click', handleClickOrTouch);
+        canvas.addEventListener('touchstart', handleClickOrTouch);
+
+        newGameButton.addEventListener('click', setup);
 
         printButton.addEventListener('click', () => {
             const dataUrl = canvas.toDataURL();
