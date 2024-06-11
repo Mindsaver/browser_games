@@ -53,12 +53,16 @@
                 height: auto !important;
                 border: none;
             }
+            button {
+                display: none;
+            }
         }
     </style>
 </head>
 <body>
     <canvas id="mazeCanvas"></canvas>
-	<!--<button id="toggleSolutionButton">Toggle Lösung</button>-->
+    <button id="newLabyrinthButton">New Labyrinth</button>
+    <button id="resetPlayerButton">Reset Player</button>
     <button id="printButton">Drucken</button>
     <div id="winModal">
         <p>Congratulations! You reached the end!</p>
@@ -67,8 +71,9 @@
     <script>
         const canvas = document.getElementById('mazeCanvas');
         const ctx = canvas.getContext('2d');
+        const newLabyrinthButton = document.getElementById('newLabyrinthButton');
+        const resetPlayerButton = document.getElementById('resetPlayerButton');
         const printButton = document.getElementById('printButton');
-       // const toggleSolutionButton = document.getElementById('toggleSolutionButton');
         const winModal = document.getElementById('winModal');
         const newGameButton = document.getElementById('newGameButton');
 
@@ -487,6 +492,25 @@
         canvas.addEventListener('click', handleClickOrTouch);
         canvas.addEventListener('touchstart', handleClickOrTouch, { passive: false });
 
+        function setCanvasSize() {
+            const screenWidth = window.innerWidth;
+            const screenHeight = window.innerHeight;
+
+            canvas.width = screenWidth * 0.8;
+            canvas.height = screenHeight * 0.7;
+            cellSize = Math.min(canvas.width, canvas.height) / 20;
+        }
+
+        newLabyrinthButton.addEventListener('click', setup);
+        resetPlayerButton.addEventListener('click', () => {
+            player.x = start.col;
+            player.y = start.row;
+            player.path = [{ x: player.x, y: player.y }];
+            gameWon = false;
+            winModal.style.display = 'none';
+            draw();
+        });
+
         newGameButton.addEventListener('click', setup);
 
         printButton.addEventListener('click', () => {
@@ -519,6 +543,10 @@
             `);
             printWindow.document.close();
         });
+
+        // Initial canvas setup
+        setCanvasSize();
+        setup();
     </script>
 </body>
 </html>
