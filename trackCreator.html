@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Random Track Generator with High-Rate Backtracking</title>
+  <title>Random Track Generator with Mobile Touch Pan & Zoom</title>
   <style>
     body { margin: 0; overflow: hidden; }
     canvas {
@@ -10,6 +10,7 @@
       background: #fafafa;
       display: block;
       margin: 20px auto;
+      touch-action: none; /* Prevent default touch behaviors */
     }
   </style>
 </head>
@@ -260,25 +261,21 @@
     function generateNextPiece() {
       let delay = updateRateNormal; // Default delay.
       
-      // If there are no states left, halt generation.
       if (stateStack.length === 0) {
         console.log("No more states left; generation halted.");
         return;
       }
 
-      // Look at the current state.
       let currentState = stateStack[stateStack.length - 1];
 
-      // If no candidate options remain, we are backtracking.
       if (currentState.options.length === 0) {
-        stateStack.pop(); // Remove current state.
+        stateStack.pop();
         if (placedPieces.length > 0) {
-          placedPieces.pop(); // Also remove the last placed piece.
+          placedPieces.pop();
         }
         console.log("Backtracking one step...");
-        delay = updateRateBacktracking; // Use a faster update rate.
+        delay = updateRateBacktracking;
       } else {
-        // Try a candidate option.
         const candidateType = currentState.options.pop();
         let candidatePiece;
         if (candidateType === 'straight') {
@@ -288,14 +285,11 @@
         } else if (candidateType === 'right_curve') {
           candidatePiece = createCurvePiece(currentState.x, currentState.y, currentState.angle, 'right');
         }
-        // Check for collision.
         if (checkCollision(candidatePiece)) {
           console.log("Candidate", candidateType, "collides at state (" +
                       currentState.x.toFixed(2) + ", " + currentState.y.toFixed(2) +
                       "), angle " + currentState.angle.toFixed(2));
-          // Continue at normal update rate.
         } else {
-          // Place the piece.
           placedPieces.push(candidatePiece);
           stateStack.push({
             x: candidatePiece.end.x,
@@ -308,15 +302,13 @@
           drawScene();
         }
       }
-      // Schedule the next update with an appropriate delay.
       setTimeout(generateNextPiece, delay);
     }
 
-    // Start the recursive generation loop.
     generateNextPiece();
 
     // -------------------------------------------------------------------
-    // Pan (Mouse Drag) Implementation
+    // Mouse Pan & Zoom (for desktop)
     // -------------------------------------------------------------------
     let isDragging = false;
     let lastMousePos = { x: 0, y: 0 };
@@ -349,9 +341,6 @@
       isDragging = false;
     });
 
-    // -------------------------------------------------------------------
-    // Zoom (Mouse Wheel) Implementation
-    // -------------------------------------------------------------------
     canvas.addEventListener('wheel', function(e) {
       e.preventDefault();
       const rect = canvas.getBoundingClientRect();
@@ -365,6 +354,71 @@
       cameraOffsetY = mouseY - worldY * zoomLevel;
       drawScene();
     });
+
+    // -------------------------------------------------------------------
+    // Touch Events for Mobile Pan & Pinch Zoom
+    // -------------------------------------------------------------------
+    let lastTouchCenter = null;
+    let lastTouchDistance = null;
+
+    function getDistance(touch1, touch2) {
+      return Math.hypot(touch2.clientX - touch1.clientX, touch2.clientY - touch1.clientY);
+    }
+
+    function getTouchCenter(touch1, touch2) {
+      return {
+        x: (touch1.clientX + touch2.clientX) / 2,
+        y: (touch1.clientY + touch2.clientY) / 2
+      };
+    }
+
+    canvas.addEventListener('touchstart', function(e) {
+      e.preventDefault();
+      if (e.touches.length === 1) {
+        lastTouchCenter = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      } else if (e.touches.length === 2) {
+        lastTouchDistance = getDistance(e.touches[0], e.touches[1]);
+        lastTouchCenter = getTouchCenter(e.touches[0], e.touches[1]);
+      }
+    }, { passive: false });
+
+    canvas.addEventListener('touchmove', function(e) {
+      e.preventDefault();
+      if (e.touches.length === 1 && lastTouchCenter) {
+        let currentTouch = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        let dx = currentTouch.x - lastTouchCenter.x;
+        let dy = currentTouch.y - lastTouchCenter.y;
+        cameraOffsetX += dx;
+        cameraOffsetY += dy;
+        lastTouchCenter = currentTouch;
+        drawScene();
+      } else if (e.touches.length === 2) {
+        let newDistance = getDistance(e.touches[0], e.touches[1]);
+        let newCenter = getTouchCenter(e.touches[0], e.touches[1]);
+        if (lastTouchDistance) {
+          let zoomFactor = newDistance / lastTouchDistance;
+          zoomLevel *= zoomFactor;
+          // Adjust the camera offset so the zoom centers on the pinch center.
+          const worldX = (lastTouchCenter.x - cameraOffsetX) / zoomLevel;
+          const worldY = (lastTouchCenter.y - cameraOffsetY) / zoomLevel;
+          cameraOffsetX = newCenter.x - worldX * zoomLevel;
+          cameraOffsetY = newCenter.y - worldY * zoomLevel;
+        }
+        lastTouchDistance = newDistance;
+        lastTouchCenter = newCenter;
+        drawScene();
+      }
+    }, { passive: false });
+
+    canvas.addEventListener('touchend', function(e) {
+      if (e.touches.length === 0) {
+        lastTouchCenter = null;
+        lastTouchDistance = null;
+      } else if (e.touches.length === 1) {
+        lastTouchCenter = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        lastTouchDistance = null;
+      }
+    }, { passive: false });
 
     // -------------------------------------------------------------------
     // Initial Draw
