@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>3D Track Builder with Three.js</title>
+    <style>
+      body { margin: 0; overflow: hidden; }
+    </style>
+    <!-- Import map to load Three.js modules -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.152.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.152.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <script type="module">
+      import * as THREE from 'three';
+      import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+      /***********************************************
+       * 3D Track Builder using Three.js (ES Module)
+       ***********************************************/
+
+      // --- Three.js Setup ---
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0xeeeeee);
+
+      const camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 0.1, 10000);
+      camera.position.set(0, 200, 200);
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(renderer.domElement);
+
+      // Add lights
+      const ambientLight = new THREE.AmbientLight(0xcccccc, 0.6);
+      scene.add(ambientLight);
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      directionalLight.position.set(100, 200, 100);
+      scene.add(directionalLight);
+
+      // OrbitControls for camera navigation
+      const controls = new OrbitControls(camera, renderer.domElement);
+      controls.target.set(0, 0, 0);
+      controls.update();
+
+      // --- Track Generation State ---
+      let placedPieces = []; // Each piece: { type, start, end, newAngle, polygon, mesh }
+      const trackWidth = 10;
+      const halfWidth = trackWidth / 2;
+      const trackHeight = 1;  // Extrusion depth
+
+      // The 2D track lies in the x-z plane. For SAT, we represent points as { x, y } where y ≡ z.
+      // The state stack holds: { x, z, angle, options }
+      let stateStack = [];
+      stateStack.push({
+        x: 0,
+        z: 0,
+        angle: 0,
+        options: shuffle(['straight', 'left_curve', 'right_curve'])
+      });
+
+      // Update rates (milliseconds)
+      const updateRateNormal = 100;       // Normal piece placement rate
+      const updateRateBacktracking = 10;    // Faster rate when backtracking
+
+      // --- Helper: Shuffle an Array ---
+      function shuffle(array) {
+        let currentIndex = array.length, randomIndex;
+        while (currentIndex !== 0) {
+          randomIndex = Math.floor(Math.random() * currentIndex);
+          currentIndex--;
+          [array[currentIndex], array[randomIndex]] = [array[randomIndex], array[currentIndex]];
+        }
+        return array;
+      }
+
+      // --- Collision Detection using SAT (2D) ---
+      // Our polygons are arrays of points { x, y } where y represents our z coordinate.
+      function projectPolygon(axis, polygon) {
+        let min = Infinity, max = -Infinity;
+        for (let i = 0; i < polygon.length; i++) {
+          const dot = polygon[i].x * axis.x + polygon[i].y * axis.y;
+          if (dot < min) min = dot;
+          if (dot > max) max = dot;
+        }
+        return [min, max];
+      }
+
+      function polygonsIntersect(poly1, poly2) {
+        const polygons = [poly1, poly2];
+        for (let i = 0; i < 2; i++) {
+          const polygon = polygons[i];
+          for (let j = 0; j < polygon.length; j++) {
+            const p1 = polygon[j];
+            const p2 = polygon[(j + 1) % polygon.length];
+            let axis = { x: -(p2.y - p1.y), y: p2.x - p1.x };
+            const len = Math.hypot(axis.x, axis.y);
+            if (len === 0) continue;
+            axis.x /= len;
+            axis.y /= len;
+            const [minA, maxA] = projectPolygon(axis, poly1);
+            const [minB, maxB] = projectPolygon(axis, poly2);
+            if (maxA <= minB || maxB <= minA) {
+              return false;
+            }
+          }
+        }
+        return true;
+      }
+
+      // --- Geometry Helpers for Track Pieces ---
+      // All coordinates lie in the x-z plane (we use {x, y} with y ≡ z).
+
+      // Compute a straight track piece.
+      // Returns: { polygon: [{x, y}], end: { x, z } }
+      function computeStraightPolygon(x, z, angle) {
+        const length = 50;
+        const endX = x + length * Math.cos(angle);
+        const endZ = z + length * Math.sin(angle);
+        // Perpendicular offset (rotate 90°): (sin(angle), -cos(angle))
+        const offsetX = halfWidth * Math.sin(angle);
+        const offsetZ = -halfWidth * Math.cos(angle);
+        const v1 = { x: x - offsetX, y: z - offsetZ };
+        const v2 = { x: x + offsetX, y: z + offsetZ };
+        const v3 = { x: endX + offsetX, y: endZ + offsetZ };
+        const v4 = { x: endX - offsetX, y: endZ - offsetZ };
+        return { polygon: [v1, v2, v3, v4], end: { x: endX, z: endZ } };
+      }
+
+      // Compute a curved track piece.
+      // direction: 'left' or 'right'
+      // Returns: { polygon, end, newAngle }
+      function computeCurvePolygon(x, z, angle, direction) {
+        const radius = 25;
+        let center;
+        if (direction === 'left') {
+          center = { x: x - radius * Math.sin(angle), z: z + radius * Math.cos(angle) };
+        } else {
+          center = { x: x + radius * Math.sin(angle), z: z - radius * Math.cos(angle) };
+        }
+        const startAngle = Math.atan2(z - center.z, x - center.x);
+        const endAngle = direction === 'left' ? startAngle + Math.PI / 2 : startAngle - Math.PI / 2;
+        const innerRadius = radius - halfWidth;
+        const outerRadius = radius + halfWidth;
+        const numSamples = 10;
+        const innerPoints = [];
+        const outerPoints = [];
+        if (direction === 'left') {
+          for (let i = 0; i <= numSamples; i++) {
+            const t = i / numSamples;
+            const a = startAngle + (Math.PI / 2) * t;
+            innerPoints.push({ x: center.x + innerRadius * Math.cos(a), y: center.z + innerRadius * Math.sin(a) });
+            outerPoints.push({ x: center.x + outerRadius * Math.cos(a), y: center.z + outerRadius * Math.sin(a) });
+          }
+        } else {
+          for (let i = 0; i <= numSamples; i++) {
+            const t = i / numSamples;
+            const a = startAngle - (Math.PI / 2) * t;
+            innerPoints.push({ x: center.x + innerRadius * Math.cos(a), y: center.z + innerRadius * Math.sin(a) });
+            outerPoints.push({ x: center.x + outerRadius * Math.cos(a), y: center.z + outerRadius * Math.sin(a) });
+          }
+        }
+        const polygon = [];
+        outerPoints.forEach(p => polygon.push(p));
+        for (let i = innerPoints.length - 1; i >= 0; i--) {
+          polygon.push(innerPoints[i]);
+        }
+        const newAngle = direction === 'left' ? angle + Math.PI / 2 : angle - Math.PI / 2;
+        const endX = center.x + radius * Math.cos(endAngle);
+        const endZ = center.z + radius * Math.sin(endAngle);
+        return { polygon, end: { x: endX, z: endZ }, newAngle };
+      }
+
+      // Wrap geometry functions to create full track piece objects.
+      function createStraightPiece(x, z, angle) {
+        const result = computeStraightPolygon(x, z, angle);
+        return {
+          type: 'straight',
+          start: { x, z },
+          end: result.end,
+          newAngle: angle,
+          polygon: result.polygon
+        };
+      }
+
+      function createCurvePiece(x, z, angle, direction) {
+        const result = computeCurvePolygon(x, z, angle, direction);
+        return {
+          type: direction === 'left' ? 'left_curve' : 'right_curve',
+          start: { x, z },
+          end: result.end,
+          newAngle: result.newAngle,
+          polygon: result.polygon
+        };
+      }
+
+      // --- Create 3D Mesh from 2D Polygon ---
+      // The polygon is an array of { x, y } points (with y ≡ z).
+      // We build a THREE.Shape, extrude it along the y–axis, and rotate it so that the track lies on the x-z plane.
+      function createMeshFromPolygon(polygon) {
+        const shape = new THREE.Shape();
+        shape.moveTo(polygon[0].x, polygon[0].y);
+        for (let i = 1; i < polygon.length; i++) {
+          shape.lineTo(polygon[i].x, polygon[i].y);
+        }
+        shape.closePath();
+
+        const extrudeSettings = {
+          depth: trackHeight,
+          bevelEnabled: false
+        };
+        const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+        const material = new THREE.MeshPhongMaterial({ color: 0x808080 });
+        const mesh = new THREE.Mesh(geometry, material);
+        // Rotate so the track lies in the x-z plane
+        mesh.rotation.x = -Math.PI / 2;
+        return mesh;
+      }
+
+      // --- Collision Detection ---
+      // Compare candidate piece with all placed pieces (except immediate predecessor).
+      function checkCollision(candidate) {
+        for (let i = 0; i < placedPieces.length; i++) {
+          const piece = placedPieces[i];
+          // Allow connection with immediate predecessor (matching start/end)
+          if (i === placedPieces.length - 1) {
+            const dx = candidate.start.x - piece.end.x;
+            const dz = candidate.start.z - piece.end.z;
+            if (Math.hypot(dx, dz) < 0.001) continue;
+          }
+          if (polygonsIntersect(candidate.polygon, piece.polygon)) {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      // --- Track Generation with Backtracking ---
+      function generateNextPiece() {
+        let delay = updateRateNormal;
+
+        if (stateStack.length === 0) {
+          console.log("No more states left; generation halted.");
+          return;
+        }
+        const currentState = stateStack[stateStack.length - 1];
+
+        if (currentState.options.length === 0) {
+          // Backtracking: Remove a random number (1 to 10) of steps, not exceeding available steps.
+          const availableSteps = stateStack.length - 1; // Keep the initial state intact.
+          if (availableSteps < 1) {
+            console.log("Cannot backtrack further.");
+            return;
+          }
+          let steps = Math.floor(Math.random() * 10) + 1;
+          steps = Math.min(steps, availableSteps);
+          for (let i = 0; i < steps; i++) {
+            stateStack.pop();
+            if (placedPieces.length > 0) {
+              const removed = placedPieces.pop();
+              scene.remove(removed.mesh);
+            }
+          }
+          console.log("Backtracked " + steps + " steps.");
+          delay = updateRateBacktracking;
+        } else {
+          const candidateType = currentState.options.pop();
+          let candidatePiece;
+          if (candidateType === 'straight') {
+            candidatePiece = createStraightPiece(currentState.x, currentState.z, currentState.angle);
+          } else if (candidateType === 'left_curve') {
+            candidatePiece = createCurvePiece(currentState.x, currentState.z, currentState.angle, 'left');
+          } else if (candidateType === 'right_curve') {
+            candidatePiece = createCurvePiece(currentState.x, currentState.z, currentState.angle, 'right');
+          }
+          if (checkCollision(candidatePiece)) {
+            console.log("Candidate", candidateType, "collides at (" +
+              currentState.x.toFixed(2) + ", " + currentState.z.toFixed(2) +
+              "), angle " + currentState.angle.toFixed(2));
+          } else {
+            const mesh = createMeshFromPolygon(candidatePiece.polygon);
+            scene.add(mesh);
+            candidatePiece.mesh = mesh;
+            placedPieces.push(candidatePiece);
+
+            // Prepare next state with adjusted probabilities.
+            let nextOptions;
+            if (candidatePiece.type === 'left_curve' || candidatePiece.type === 'right_curve') {
+              nextOptions = shuffle(['straight', 'straight', 'straight', 'left_curve', 'right_curve']);
+            } else {
+              nextOptions = shuffle(['straight', 'left_curve', 'right_curve']);
+            }
+            stateStack.push({
+              x: candidatePiece.end.x,
+              z: candidatePiece.end.z,
+              angle: candidatePiece.newAngle,
+              options: nextOptions
+            });
+            console.log("Placed", candidateType, "at (" +
+              currentState.x.toFixed(2) + ", " + currentState.z.toFixed(2) + ")");
+          }
+        }
+        setTimeout(generateNextPiece, delay);
+      }
+
+      // Start generating the track
+      generateNextPiece();
+
+      // --- Render Loop ---
+      function animate() {
+        requestAnimationFrame(animate);
+        controls.update();
+        renderer.render(scene, camera);
+      }
+      animate();
+
+      // --- Handle Window Resize ---
+      window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+    </script>
+  </body>
+</html>
