@@ -23,6 +23,8 @@
     const canvas = document.getElementById('trackCanvas');
     const ctx = canvas.getContext('2d');
 
+		canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
     // Camera state: translation offset and zoom level.
     let cameraOffsetX = canvas.width / 2;
     let cameraOffsetY = canvas.height / 2;
