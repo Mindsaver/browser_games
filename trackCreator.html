@@ -275,14 +275,12 @@ function generateNextPiece() {
     // ohne den allerersten Zustand zu entfernen.
     let availableSteps = stateStack.length - 1; // Der erste Block bleibt bestehen.
     if (availableSteps < 1) {
-      // Falls wir nur noch den Startzustand haben, kann nicht weiter zurückgegangen werden.
       console.log("Kein Backtracking möglich, nur der Startzustand bleibt übrig.");
       return;
     }
     // Wähle zufällig zwischen 1 und 10 Schritten, aber nicht mehr als availableSteps.
     let steps = Math.floor(Math.random() * 10) + 1;
     steps = Math.min(steps, availableSteps);
-
     for (let i = 0; i < steps; i++) {
       stateStack.pop();
       if (placedPieces.length > 0) {
@@ -307,11 +305,20 @@ function generateNextPiece() {
                   "), angle " + currentState.angle.toFixed(2));
     } else {
       placedPieces.push(candidatePiece);
+      // Hier wird die Optionsliste des nächsten Zustands angepasst:
+      // Falls eine Kurve platziert wurde, soll "straight" häufiger vorkommen.
+      let nextOptions;
+      if (candidatePiece.type === 'left_curve' || candidatePiece.type === 'right_curve') {
+        // Mehrfacheinträge für "straight" erhöhen dessen Wahrscheinlichkeit.
+        nextOptions = shuffle(['straight', 'straight', 'straight', 'left_curve', 'right_curve']);
+      } else {
+        nextOptions = shuffle(['straight', 'left_curve', 'right_curve']);
+      }
       stateStack.push({
         x: candidatePiece.end.x,
         y: candidatePiece.end.y,
         angle: candidatePiece.newAngle,
-        options: shuffle(['straight', 'left_curve', 'right_curve'])
+        options: nextOptions
       });
       console.log("Placed", candidateType, "at state (" +
                   currentState.x.toFixed(2) + ", " + currentState.y.toFixed(2) + ")");
@@ -320,6 +327,7 @@ function generateNextPiece() {
   }
   setTimeout(generateNextPiece, delay);
 }
+
 
 
     generateNextPiece();
