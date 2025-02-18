@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Random Track Generator with High-Rate Backtracking</title>
+  <style>
+    body { margin: 0; overflow: hidden; }
+    canvas {
+      border: 1px solid #333;
+      background: #fafafa;
+      display: block;
+      margin: 20px auto;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="trackCanvas" width="800" height="600"></canvas>
+  <script>
+    // -------------------------------------------------------------------
+    // Canvas, Camera & Global State
+    // -------------------------------------------------------------------
+    const canvas = document.getElementById('trackCanvas');
+    const ctx = canvas.getContext('2d');
+
+    // Camera state: translation offset and zoom level.
+    let cameraOffsetX = canvas.width / 2;
+    let cameraOffsetY = canvas.height / 2;
+    let zoomLevel = 1;
+
+    // Track state: stored in placedPieces.
+    let placedPieces = []; // Array to store placed track pieces
+
+    // Track width (for polygon generation)
+    const trackWidth = 10;
+    const halfWidth = trackWidth / 2;
+
+    // -------------------------------------------------------------------
+    // Backtracking State
+    // -------------------------------------------------------------------
+    // Each element in stateStack represents a “node” of the track generation:
+    // - x, y, angle: the starting point and orientation at this node.
+    // - options: an array of candidate asset types (shuffled) that have not yet been tried.
+    let stateStack = [];
+    // Initialize with the starting state.
+    stateStack.push({
+      x: 0,
+      y: 0,
+      angle: 0,
+      options: shuffle(['straight', 'left_curve', 'right_curve'])
+    });
+
+    // Update rates (in milliseconds)
+    const updateRateNormal = 10;       // Normal piece placement rate.
+    const updateRateBacktracking = 1;    // Faster rate when backtracking.
+
+    // Helper: shuffle an array (Fisher–Yates shuffle)
+    function shuffle(array) {
+      let currentIndex = array.length, randomIndex;
+      while (currentIndex !== 0) {
+        randomIndex = Math.floor(Math.random() * currentIndex);
+        currentIndex--;
+        [array[currentIndex], array[randomIndex]] = [array[randomIndex], array[currentIndex]];
+      }
+      return array;
+    }
+
+    // -------------------------------------------------------------------
+    // Camera & Drawing Helpers
+    // -------------------------------------------------------------------
+    function updateCanvasTransform() {
+      ctx.setTransform(zoomLevel, 0, 0, zoomLevel, cameraOffsetX, cameraOffsetY);
+    }
+
+    function clearCanvas() {
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+    }
+
+    function drawScene() {
+      clearCanvas();
+      updateCanvasTransform();
+      // Draw starting point.
+      ctx.fillStyle = "red";
+      ctx.beginPath();
+      ctx.arc(0, 0, 3, 0, Math.PI * 2);
+      ctx.fill();
+      // Draw all track pieces.
+      for (const piece of placedPieces) {
+        drawPiece(piece);
+      }
+    }
+
+    // -------------------------------------------------------------------
+    // SAT Collision Helpers
+    // -------------------------------------------------------------------
+    function projectPolygon(axis, polygon) {
+      let min = Infinity, max = -Infinity;
+      for (let i = 0; i < polygon.length; i++) {
+        let dot = polygon[i].x * axis.x + polygon[i].y * axis.y;
+        if (dot < min) min = dot;
+        if (dot > max) max = dot;
+      }
+      return [min, max];
+    }
+
+    function polygonsIntersect(poly1, poly2) {
+      const polygons = [poly1, poly2];
+      for (let i = 0; i < 2; i++) {
+        const polygon = polygons[i];
+        for (let j = 0; j < polygon.length; j++) {
+          const p1 = polygon[j];
+          const p2 = polygon[(j + 1) % polygon.length];
+          let axis = { x: -(p2.y - p1.y), y: p2.x - p1.x };
+          const len = Math.hypot(axis.x, axis.y);
+          if (len === 0) continue;
+          axis.x /= len;
+          axis.y /= len;
+          let [minA, maxA] = projectPolygon(axis, poly1);
+          let [minB, maxB] = projectPolygon(axis, poly2);
+          if (maxA <= minB || maxB <= minA) {
+            return false;
+          }
+        }
+      }
+      return true;
+    }
+
+    // -------------------------------------------------------------------
+    // Track Asset Geometry
+    // -------------------------------------------------------------------
+    // --- Straight Piece ---
+    function computeStraightPolygon(x, y, angle) {
+      const length = 50;
+      const endX = x + length * Math.cos(angle);
+      const endY = y + length * Math.sin(angle);
+      const offsetX = halfWidth * Math.sin(angle);
+      const offsetY = -halfWidth * Math.cos(angle);
+      const v1 = { x: x - offsetX, y: y - offsetY };
+      const v2 = { x: x + offsetX, y: y + offsetY };
+      const v3 = { x: endX + offsetX, y: endY + offsetY };
+      const v4 = { x: endX - offsetX, y: endY - offsetY };
+      return { polygon: [v1, v2, v3, v4], end: { x: endX, y: endY } };
+    }
+
+    // --- Curve Piece ---
+    function computeCurvePolygon(x, y, angle, direction) {
+      const radius = 25;
+      let center;
+      if (direction === 'left') {
+        center = { x: x - radius * Math.sin(angle), y: y + radius * Math.cos(angle) };
+      } else {
+        center = { x: x + radius * Math.sin(angle), y: y - radius * Math.cos(angle) };
+      }
+      const startAngle = Math.atan2(y - center.y, x - center.x);
+      const endAngle = direction === 'left' 
+                        ? startAngle + Math.PI / 2 
+                        : startAngle - Math.PI / 2;
+      const innerRadius = radius - halfWidth;
+      const outerRadius = radius + halfWidth;
+      const numSamples = 10;
+      const innerPoints = [];
+      const outerPoints = [];
+      if (direction === 'left') {
+        for (let i = 0; i <= numSamples; i++) {
+          let t = i / numSamples;
+          let a = startAngle + (Math.PI / 2) * t;
+          innerPoints.push({ x: center.x + innerRadius * Math.cos(a), y: center.y + innerRadius * Math.sin(a) });
+          outerPoints.push({ x: center.x + outerRadius * Math.cos(a), y: center.y + outerRadius * Math.sin(a) });
+        }
+      } else {
+        for (let i = 0; i <= numSamples; i++) {
+          let t = i / numSamples;
+          let a = startAngle - (Math.PI / 2) * t;
+          innerPoints.push({ x: center.x + innerRadius * Math.cos(a), y: center.y + innerRadius * Math.sin(a) });
+          outerPoints.push({ x: center.x + outerRadius * Math.cos(a), y: center.y + outerRadius * Math.sin(a) });
+        }
+      }
+      const polygon = [];
+      outerPoints.forEach(p => polygon.push(p));
+      for (let i = innerPoints.length - 1; i >= 0; i--) {
+        polygon.push(innerPoints[i]);
+      }
+      const newAngle = direction === 'left' ? angle + Math.PI / 2 : angle - Math.PI / 2;
+      const endX = center.x + radius * Math.cos(endAngle);
+      const endY = center.y + radius * Math.sin(endAngle);
+      return { polygon: polygon, end: { x: endX, y: endY }, newAngle: newAngle };
+    }
+
+    // Helper functions to create full piece objects.
+    function createStraightPiece(x, y, angle) {
+      const result = computeStraightPolygon(x, y, angle);
+      return {
+        type: 'straight',
+        start: { x, y },
+        end: result.end,
+        newAngle: angle,
+        polygon: result.polygon
+      };
+    }
+
+    function createCurvePiece(x, y, angle, direction) {
+      const result = computeCurvePolygon(x, y, angle, direction);
+      return {
+        type: direction === 'left' ? 'left_curve' : 'right_curve',
+        start: { x, y },
+        end: result.end,
+        newAngle: result.newAngle,
+        polygon: result.polygon
+      };
+    }
+
+    // -------------------------------------------------------------------
+    // Collision Detection Using Full-Polygon SAT
+    // -------------------------------------------------------------------
+    function checkCollision(candidate) {
+      for (let i = 0; i < placedPieces.length; i++) {
+        const piece = placedPieces[i];
+        // Allow connection with the immediate predecessor.
+        if (i === placedPieces.length - 1) {
+          const dx = candidate.start.x - piece.end.x;
+          const dy = candidate.start.y - piece.end.y;
+          if (Math.hypot(dx, dy) < 0.001) {
+            continue;
+          }
+        }
+        if (polygonsIntersect(candidate.polygon, piece.polygon)) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    // -------------------------------------------------------------------
+    // Drawing a Track Piece
+    // -------------------------------------------------------------------
+    function drawPiece(piece) {
+      ctx.strokeStyle = "black";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      const poly = piece.polygon;
+      ctx.moveTo(poly[0].x, poly[0].y);
+      for (let i = 1; i < poly.length; i++) {
+        ctx.lineTo(poly[i].x, poly[i].y);
+      }
+      ctx.closePath();
+      ctx.stroke();
+      ctx.strokeStyle = "red";
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(piece.start.x, piece.start.y);
+      ctx.lineTo(piece.end.x, piece.end.y);
+      ctx.stroke();
+    }
+
+    // -------------------------------------------------------------------
+    // Track Generation with Step-by-Step Backtracking and Dynamic Update Rate
+    // -------------------------------------------------------------------
+    function generateNextPiece() {
+      let delay = updateRateNormal; // Default delay.
+      
+      // If there are no states left, halt generation.
+      if (stateStack.length === 0) {
+        console.log("No more states left; generation halted.");
+        return;
+      }
+
+      // Look at the current state.
+      let currentState = stateStack[stateStack.length - 1];
+
+      // If no candidate options remain, we are backtracking.
+      if (currentState.options.length === 0) {
+        stateStack.pop(); // Remove current state.
+        if (placedPieces.length > 0) {
+          placedPieces.pop(); // Also remove the last placed piece.
+        }
+        console.log("Backtracking one step...");
+        delay = updateRateBacktracking; // Use a faster update rate.
+      } else {
+        // Try a candidate option.
+        const candidateType = currentState.options.pop();
+        let candidatePiece;
+        if (candidateType === 'straight') {
+          candidatePiece = createStraightPiece(currentState.x, currentState.y, currentState.angle);
+        } else if (candidateType === 'left_curve') {
+          candidatePiece = createCurvePiece(currentState.x, currentState.y, currentState.angle, 'left');
+        } else if (candidateType === 'right_curve') {
+          candidatePiece = createCurvePiece(currentState.x, currentState.y, currentState.angle, 'right');
+        }
+        // Check for collision.
+        if (checkCollision(candidatePiece)) {
+          console.log("Candidate", candidateType, "collides at state (" +
+                      currentState.x.toFixed(2) + ", " + currentState.y.toFixed(2) +
+                      "), angle " + currentState.angle.toFixed(2));
+          // Continue at normal update rate.
+        } else {
+          // Place the piece.
+          placedPieces.push(candidatePiece);
+          stateStack.push({
+            x: candidatePiece.end.x,
+            y: candidatePiece.end.y,
+            angle: candidatePiece.newAngle,
+            options: shuffle(['straight', 'left_curve', 'right_curve'])
+          });
+          console.log("Placed", candidateType, "at state (" +
+                      currentState.x.toFixed(2) + ", " + currentState.y.toFixed(2) + ")");
+          drawScene();
+        }
+      }
+      // Schedule the next update with an appropriate delay.
+      setTimeout(generateNextPiece, delay);
+    }
+
+    // Start the recursive generation loop.
+    generateNextPiece();
+
+    // -------------------------------------------------------------------
+    // Pan (Mouse Drag) Implementation
+    // -------------------------------------------------------------------
+    let isDragging = false;
+    let lastMousePos = { x: 0, y: 0 };
+
+    canvas.addEventListener('mousedown', function(e) {
+      if (e.button === 0) {
+        isDragging = true;
+        lastMousePos = { x: e.clientX, y: e.clientY };
+      }
+    });
+
+    canvas.addEventListener('mousemove', function(e) {
+      if (isDragging) {
+        const dx = e.clientX - lastMousePos.x;
+        const dy = e.clientY - lastMousePos.y;
+        cameraOffsetX += dx;
+        cameraOffsetY += dy;
+        lastMousePos = { x: e.clientX, y: e.clientY };
+        drawScene();
+      }
+    });
+
+    canvas.addEventListener('mouseup', function(e) {
+      if (e.button === 0) {
+        isDragging = false;
+      }
+    });
+
+    canvas.addEventListener('mouseleave', function() {
+      isDragging = false;
+    });
+
+    // -------------------------------------------------------------------
+    // Zoom (Mouse Wheel) Implementation
+    // -------------------------------------------------------------------
+    canvas.addEventListener('wheel', function(e) {
+      e.preventDefault();
+      const rect = canvas.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
+      const worldX = (mouseX - cameraOffsetX) / zoomLevel;
+      const worldY = (mouseY - cameraOffsetY) / zoomLevel;
+      const zoomFactor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
+      zoomLevel *= zoomFactor;
+      cameraOffsetX = mouseX - worldX * zoomLevel;
+      cameraOffsetY = mouseY - worldY * zoomLevel;
+      drawScene();
+    });
+
+    // -------------------------------------------------------------------
+    // Initial Draw
+    // -------------------------------------------------------------------
+    updateCanvasTransform();
+    drawScene();
+  </script>
+</body>
+</html>
