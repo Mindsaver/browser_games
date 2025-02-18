@@ -260,52 +260,67 @@
     // -------------------------------------------------------------------
     // Track Generation with Step-by-Step Backtracking and Dynamic Update Rate
     // -------------------------------------------------------------------
-    function generateNextPiece() {
-      let delay = updateRateNormal; // Default delay.
-      
-      if (stateStack.length === 0) {
-        console.log("No more states left; generation halted.");
-        return;
-      }
+function generateNextPiece() {
+  let delay = updateRateNormal; // Standard-Verzögerung
 
-      let currentState = stateStack[stateStack.length - 1];
+  if (stateStack.length === 0) {
+    console.log("No more states left; generation halted.");
+    return;
+  }
 
-      if (currentState.options.length === 0) {
-        stateStack.pop();
-        if (placedPieces.length > 0) {
-          placedPieces.pop();
-        }
-        console.log("Backtracking one step...");
-        delay = updateRateBacktracking;
-      } else {
-        const candidateType = currentState.options.pop();
-        let candidatePiece;
-        if (candidateType === 'straight') {
-          candidatePiece = createStraightPiece(currentState.x, currentState.y, currentState.angle);
-        } else if (candidateType === 'left_curve') {
-          candidatePiece = createCurvePiece(currentState.x, currentState.y, currentState.angle, 'left');
-        } else if (candidateType === 'right_curve') {
-          candidatePiece = createCurvePiece(currentState.x, currentState.y, currentState.angle, 'right');
-        }
-        if (checkCollision(candidatePiece)) {
-          console.log("Candidate", candidateType, "collides at state (" +
-                      currentState.x.toFixed(2) + ", " + currentState.y.toFixed(2) +
-                      "), angle " + currentState.angle.toFixed(2));
-        } else {
-          placedPieces.push(candidatePiece);
-          stateStack.push({
-            x: candidatePiece.end.x,
-            y: candidatePiece.end.y,
-            angle: candidatePiece.newAngle,
-            options: shuffle(['straight', 'left_curve', 'right_curve'])
-          });
-          console.log("Placed", candidateType, "at state (" +
-                      currentState.x.toFixed(2) + ", " + currentState.y.toFixed(2) + ")");
-          drawScene();
-        }
-      }
-      setTimeout(generateNextPiece, delay);
+  let currentState = stateStack[stateStack.length - 1];
+
+  if (currentState.options.length === 0) {
+    // Berechne, wie viele Schritte maximal zurückgegangen werden können,
+    // ohne den allerersten Zustand zu entfernen.
+    let availableSteps = stateStack.length - 1; // Der erste Block bleibt bestehen.
+    if (availableSteps < 1) {
+      // Falls wir nur noch den Startzustand haben, kann nicht weiter zurückgegangen werden.
+      console.log("Kein Backtracking möglich, nur der Startzustand bleibt übrig.");
+      return;
     }
+    // Wähle zufällig zwischen 1 und 10 Schritten, aber nicht mehr als availableSteps.
+    let steps = Math.floor(Math.random() * 10) + 1;
+    steps = Math.min(steps, availableSteps);
+
+    for (let i = 0; i < steps; i++) {
+      stateStack.pop();
+      if (placedPieces.length > 0) {
+        placedPieces.pop();
+      }
+    }
+    console.log("Backtracking " + steps + " Schritte...");
+    delay = updateRateBacktracking;
+  } else {
+    const candidateType = currentState.options.pop();
+    let candidatePiece;
+    if (candidateType === 'straight') {
+      candidatePiece = createStraightPiece(currentState.x, currentState.y, currentState.angle);
+    } else if (candidateType === 'left_curve') {
+      candidatePiece = createCurvePiece(currentState.x, currentState.y, currentState.angle, 'left');
+    } else if (candidateType === 'right_curve') {
+      candidatePiece = createCurvePiece(currentState.x, currentState.y, currentState.angle, 'right');
+    }
+    if (checkCollision(candidatePiece)) {
+      console.log("Candidate", candidateType, "collides at state (" +
+                  currentState.x.toFixed(2) + ", " + currentState.y.toFixed(2) +
+                  "), angle " + currentState.angle.toFixed(2));
+    } else {
+      placedPieces.push(candidatePiece);
+      stateStack.push({
+        x: candidatePiece.end.x,
+        y: candidatePiece.end.y,
+        angle: candidatePiece.newAngle,
+        options: shuffle(['straight', 'left_curve', 'right_curve'])
+      });
+      console.log("Placed", candidateType, "at state (" +
+                  currentState.x.toFixed(2) + ", " + currentState.y.toFixed(2) + ")");
+      drawScene();
+    }
+  }
+  setTimeout(generateNextPiece, delay);
+}
+
 
     generateNextPiece();
 
