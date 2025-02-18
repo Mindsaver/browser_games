@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>3D Track with Car (Segmented Walls Without Gaps)</title>
+    <style>
+      body { margin: 0; overflow: hidden; }
+    </style>
+    <!-- Import map for Three.js modules -->
+    <script type="importmap">
+      {
+        "imports": {
+          "three": "https://cdn.jsdelivr.net/npm/three@0.152.0/build/three.module.js",
+          "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.152.0/examples/jsm/"
+        }
+      }
+    </script>
+  </head>
+  <body>
+    <script type="module">
+      import * as THREE from 'three';
+      // (OrbitControls commented out because we now have a follow–camera)
+      // import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+      /***********************************************
+       * 3D Track Builder with a User-Driven Car
+       * - Track pieces are built from straight and curved segments.
+       * - For curved pieces, both the outer and inner walls are segmented
+       *   so that no single wall covers too much of the curve.
+       * - Wall segments now overlap by one point to eliminate gaps.
+       ***********************************************/
+
+      // --- Scene Setup ---
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0xeeeeee);
+
+      const camera = new THREE.PerspectiveCamera(
+        60,
+        window.innerWidth / window.innerHeight,
+        0.1,
+        10000
+      );
+      camera.position.set(0, 200, 200);
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(renderer.domElement);
+
+      // Lights
+      const ambientLight = new THREE.AmbientLight(0xcccccc, 0.6);
+      scene.add(ambientLight);
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      directionalLight.position.set(100, 200, 100);
+      scene.add(directionalLight);
+
+      // --- Track Generation Setup ---
+      let placedPieces = []; // Each piece: { type, start, end, newAngle, polygon, mesh, ... }
+      const trackWidth = 20; // road width
+      const halfWidth = trackWidth / 2;
+      const trackHeight = 1; // extrusion depth
+
+      // The stateStack holds the current generation state:
+      // Each state: { x, z, angle, options }
+      let stateStack = [];
+      stateStack.push({
+        x: 0,
+        z: 0,
+        angle: 0,
+        options: shuffle(['straight', 'left_curve', 'right_curve'])
+      });
+
+      const numTrackPieces = 100; // total pieces
+
+      // --- Utility: Array Shuffle ---
+      function shuffle(array) {
+        let currentIndex = array.length, randomIndex;
+        while (currentIndex !== 0) {
+          randomIndex = Math.floor(Math.random() * currentIndex);
+          currentIndex--;
+          [array[currentIndex], array[randomIndex]] = [array[randomIndex], array[currentIndex]];
+        }
+        return array;
+      }
+
+      // --- Point in Polygon (Ray Casting) ---
+      // Polygons are arrays of points: { x, y } (with y representing z)
+      function pointInPolygon(point, polygon) {
+        let inside = false;
+        for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+          const xi = polygon[i].x, yi = -polygon[i].y;
+          const xj = polygon[j].x, yj = -polygon[j].y;
+          const intersect = ((yi > point.y) !== (yj > point.y)) &&
+                            (point.x < (xj - xi) * (point.y - yi) / ((yj - yi) || 0.00001) + xi);
+          if (intersect) inside = !inside;
+        }
+        return inside;
+      }
+
+      // --- Collision Detection (2D SAT) for track generation ---
+      function projectPolygon(axis, polygon) {
+        let min = Infinity, max = -Infinity;
+        for (let i = 0; i < polygon.length; i++) {
+          const dot = polygon[i].x * axis.x + polygon[i].y * axis.y;
+          if (dot < min) min = dot;
+          if (dot > max) max = dot;
+        }
+        return [min, max];
+      }
+
+      function polygonsIntersect(poly1, poly2) {
+        const polygons = [poly1, poly2];
+        for (let i = 0; i < 2; i++) {
+          const polygon = polygons[i];
+          for (let j = 0; j < polygon.length; j++) {
+            const p1 = polygon[j];
+            const p2 = polygon[(j + 1) % polygon.length];
+            let axis = { x: -(p2.y - p1.y), y: p2.x - p1.x };
+            const len = Math.hypot(axis.x, axis.y);
+            if (len === 0) continue;
+            axis.x /= len;
+            axis.y /= len;
+            const [minA, maxA] = projectPolygon(axis, poly1);
+            const [minB, maxB] = projectPolygon(axis, poly2);
+            if (maxA <= minB || maxB <= minA) {
+              return false;
+            }
+          }
+        }
+        return true;
+      }
+
+      // --- Geometry Helpers for Track Pieces ---
+
+      // Straight piece: remains unchanged.
+      function computeStraightPolygon(x, z, angle) {
+        const length = 50;
+        const endX = x + length * Math.cos(angle);
+        const endZ = z + length * Math.sin(angle);
+        // Perpendicular offset (rotate 90°)
+        const offsetX = halfWidth * Math.sin(angle);
+        const offsetZ = -halfWidth * Math.cos(angle);
+        const v1 = { x: x - offsetX, y: z - offsetZ };
+        const v2 = { x: x + offsetX, y: z + offsetZ };
+        const v3 = { x: endX + offsetX, y: endZ + offsetZ };
+        const v4 = { x: endX - offsetX, y: endZ - offsetZ };
+        return { polygon: [v1, v2, v3, v4], end: { x: endX, z: endZ } };
+      }
+
+      // Curved piece: using THREE.ArcCurve for smooth boundaries.
+      // This returns both the outer boundary and the inner boundary (in original order).
+      function computeCurvePolygon(x, z, angle, direction) {
+        const radius = 25;
+        // Determine center of curvature
+        let center;
+        if (direction === 'left') {
+          center = { x: x - radius * Math.sin(angle), z: z + radius * Math.cos(angle) };
+        } else {
+          center = { x: x + radius * Math.sin(angle), z: z - radius * Math.cos(angle) };
+        }
+        // Starting angle from center to start point:
+        const startAngle = Math.atan2(z - center.z, x - center.x);
+        // For a left curve, sweep +90°; for a right curve, sweep -90°
+        const endAngle = direction === 'left' ? startAngle + Math.PI / 2 : startAngle - Math.PI / 2;
+        const innerRadius = radius - halfWidth;
+        const outerRadius = radius + halfWidth;
+        const numSamples = 20; // for a smooth arc
+
+        // Outer boundary arc:
+        const outerCurve = new THREE.ArcCurve(center.x, center.z, outerRadius, startAngle, endAngle, direction === 'right');
+        const outerPointsRaw = outerCurve.getPoints(numSamples);
+        const outerPoints = outerPointsRaw.map(p => ({ x: p.x, y: p.y }));
+
+        // Inner boundary arc (kept in original order for segmentation):
+        const innerCurve = new THREE.ArcCurve(center.x, center.z, innerRadius, startAngle, endAngle, direction === 'right');
+        const innerPointsRaw = innerCurve.getPoints(numSamples);
+        const innerPoints = innerPointsRaw.map(p => ({ x: p.x, y: p.y }));
+
+        // For the full road polygon, concatenate the outer points and the inner points reversed.
+        const polygon = outerPoints.concat(innerPoints.slice().reverse());
+
+        // New driving angle is the old angle rotated ±90°.
+        const newAngle = direction === 'left' ? angle + Math.PI / 2 : angle - Math.PI / 2;
+
+        // Determine the end position as the midpoint between the outer and inner boundaries at endAngle.
+        const endOuter = { x: center.x + outerRadius * Math.cos(endAngle), y: center.z + outerRadius * Math.sin(endAngle) };
+        const endInner = { x: center.x + innerRadius * Math.cos(endAngle), y: center.z + innerRadius * Math.sin(endAngle) };
+        const end = { x: (endOuter.x + endInner.x) / 2, z: (endOuter.y + endInner.y) / 2 };
+
+        return { polygon, end, newAngle, outerPoints, innerBoundary: innerPoints };
+      }
+
+      function createStraightPiece(x, z, angle) {
+        const result = computeStraightPolygon(x, z, angle);
+        return {
+          type: 'straight',
+          start: { x, z },
+          end: result.end,
+          newAngle: angle,
+          polygon: result.polygon,
+        };
+      }
+
+      function createCurvePiece(x, z, angle, direction) {
+        const result = computeCurvePolygon(x, z, angle, direction);
+        return {
+          type: direction === 'left' ? 'left_curve' : 'right_curve',
+          start: { x, z },
+          end: result.end,
+          newAngle: result.newAngle,
+          polygon: result.polygon,
+          outerBoundary: result.outerPoints, // used for outer wall
+          innerBoundary: result.innerBoundary, // used for segmented inner wall
+          startAngle: angle
+        };
+      }
+
+      // --- Create 3D Mesh from a 2D Polygon ---
+      function createMeshFromPolygon(polygon) {
+        const shape = new THREE.Shape();
+        shape.moveTo(polygon[0].x, polygon[0].y);
+        for (let i = 1; i < polygon.length; i++) {
+          shape.lineTo(polygon[i].x, polygon[i].y);
+        }
+        shape.closePath();
+        const extrudeSettings = {
+          depth: trackHeight,
+          bevelEnabled: false,
+        };
+        const geometry = new THREE.ExtrudeGeometry(shape, extrudeSettings);
+        const material = new THREE.MeshPhongMaterial({ color: 0x808080 });
+        const mesh = new THREE.Mesh(geometry, material);
+        // Rotate so that the track lies in the x–z plane.
+        mesh.rotation.x = -Math.PI / 2;
+        return mesh;
+      }
+
+      // --- Create Walls Along the Track Edges ---
+      // This helper creates a wall mesh given a set of edge points.
+      function createWallMesh(edgePoints) {
+        const wallShape = new THREE.Shape();
+        wallShape.moveTo(edgePoints[0].x, edgePoints[0].y);
+        for (let i = 1; i < edgePoints.length; i++) {
+          wallShape.lineTo(edgePoints[i].x, edgePoints[i].y);
+        }
+        wallShape.closePath();
+        const wallSettings = {
+          depth: 5,
+          bevelEnabled: false,
+        };
+        const wallGeometry = new THREE.ExtrudeGeometry(wallShape, wallSettings);
+        const wallMaterial = new THREE.MeshPhongMaterial({ color: 0x333333 });
+        const wallMesh = new THREE.Mesh(wallGeometry, wallMaterial);
+        wallMesh.rotation.x = -Math.PI / 2;
+        return wallMesh;
+      }
+
+      // --- Create Segmented Wall Meshes ---
+      // This function splits an array of points into overlapping segments.
+      function createSegmentedWallMeshes(points, segmentSize = 5) {
+        const meshes = [];
+        let i = 0;
+        while (i < points.length - 1) {
+          // Create a segment from index i to i+segmentSize (with overlapping end point)
+          const segment = points.slice(i, Math.min(i + segmentSize, points.length));
+          if (segment.length >= 2) {
+            meshes.push(createWallMesh(segment));
+          }
+          if (i + segmentSize >= points.length) break;
+          // Overlap one point with the previous segment to avoid gaps.
+          i += (segmentSize - 1);
+        }
+        return meshes;
+      }
+
+      // --- Check for Collision of a Candidate Piece (during track generation) ---
+      function checkCollision(candidate) {
+        for (let i = 0; i < placedPieces.length; i++) {
+          const piece = placedPieces[i];
+          // Allow connection with the immediate predecessor.
+          if (i === placedPieces.length - 1) {
+            const dx = candidate.start.x - piece.end.x;
+            const dz = candidate.start.z - piece.end.z;
+            if (Math.hypot(dx, dz) < 0.001) continue;
+          }
+          if (polygonsIntersect(candidate.polygon, piece.polygon)) {
+            return true;
+          }
+        }
+        return false;
+      }
+
+      // --- Synchronous Track Generation (100 Pieces) ---
+      function generateTrack(numPieces) {
+        while (placedPieces.length < numPieces && stateStack.length > 0) {
+          const currentState = stateStack[stateStack.length - 1];
+          if (currentState.options.length === 0) {
+            // Backtracking: remove a few steps (keeping the initial state)
+            const availableSteps = stateStack.length - 1;
+            if (availableSteps < 1) break;
+            let steps = Math.floor(Math.random() * 10) + 1;
+            steps = Math.min(steps, availableSteps);
+            for (let i = 0; i < steps; i++) {
+              stateStack.pop();
+              if (placedPieces.length > 0) {
+                const removed = placedPieces.pop();
+                scene.remove(removed.mesh);
+              }
+            }
+          } else {
+            const candidateType = currentState.options.pop();
+            let candidatePiece;
+            if (candidateType === 'straight') {
+              candidatePiece = createStraightPiece(currentState.x, currentState.z, currentState.angle);
+            } else if (candidateType === 'left_curve') {
+              candidatePiece = createCurvePiece(currentState.x, currentState.z, currentState.angle, 'left');
+            } else if (candidateType === 'right_curve') {
+              candidatePiece = createCurvePiece(currentState.x, currentState.z, currentState.angle, 'right');
+            }
+            if (checkCollision(candidatePiece)) {
+              continue;
+            } else {
+              // Create the road piece.
+              const mesh = createMeshFromPolygon(candidatePiece.polygon);
+              scene.add(mesh);
+              candidatePiece.mesh = mesh;
+              placedPieces.push(candidatePiece);
+
+
+              let nextOptions;
+              if (candidatePiece.type === 'left_curve' || candidatePiece.type === 'right_curve') {
+                nextOptions = shuffle(['straight', 'straight', 'straight', 'left_curve', 'right_curve']);
+              } else {
+                nextOptions = shuffle(['straight', 'left_curve', 'right_curve']);
+              }
+              stateStack.push({
+                x: candidatePiece.end.x,
+                z: candidatePiece.end.z,
+                angle: candidatePiece.newAngle,
+                options: nextOptions,
+              });
+            }
+          }
+        }
+      }
+
+      // Generate the full track synchronously.
+      generateTrack(numTrackPieces);
+      console.log("Track generated with", placedPieces.length, "pieces.");
+
+      // --- Car Setup ---
+      const carGeometry = new THREE.BoxGeometry(8, 2, 4);
+      const carMaterial = new THREE.MeshPhongMaterial({ color: 0xff0000 });
+      const carMesh = new THREE.Mesh(carGeometry, carMaterial);
+      carMesh.position.y = trackHeight + 0.5;
+      scene.add(carMesh);
+      const carRotationOffset = 0;
+
+      // --- Car Control Variables ---
+      let carVelocity = 0;
+      let carAngle = 0; // in radians; 0 means facing +x
+      const acceleration = 50; // units/s²
+      const friction = 20;     // units/s²
+      const maxSpeed = 50;    // units/s
+      const turnSpeed = 3.0;   // radians/s
+
+      // --- Camera Follow Parameters ---
+      const followDistance = 50;
+      const followHeight = 20;
+
+      // --- Keyboard Input Handling ---
+      const keys = {};
+      window.addEventListener('keydown', (event) => {
+        keys[event.key.toLowerCase()] = true;
+      });
+      window.addEventListener('keyup', (event) => {
+        keys[event.key.toLowerCase()] = false;
+      });
+
+      // --- Animation Loop ---
+      const clock = new THREE.Clock();
+function animate() {
+  const dt = clock.getDelta();
+
+  // Save current position in case we need to bounce
+  const oldPosition = carMesh.position.clone();
+
+  // Update acceleration/braking.
+  if (keys['w'] || keys['arrowup']) {
+    carVelocity += acceleration * dt;
+  } else if (keys['s'] || keys['arrowdown']) {
+    carVelocity -= acceleration * dt;
+  } else {
+    // Apply friction.
+    if (carVelocity > 0) {
+      carVelocity = Math.max(carVelocity - friction * dt, 0);
+    } else if (carVelocity < 0) {
+      carVelocity = Math.min(carVelocity + friction * dt, 0);
+    }
+  }
+  carVelocity = Math.max(-maxSpeed, Math.min(maxSpeed, carVelocity));
+
+  // Turning: Inverted inputs (A increases angle, D decreases).
+  if (keys['a'] || keys['arrowleft']) {
+    carAngle += turnSpeed * dt;
+  }
+  if (keys['d'] || keys['arrowright']) {
+    carAngle -= turnSpeed * dt;
+  }
+
+  // Update car position.
+  carMesh.position.x += Math.cos(-carAngle) * carVelocity * dt;
+  carMesh.position.z += Math.sin(-carAngle) * carVelocity * dt;
+  carMesh.rotation.y = carAngle + carRotationOffset;
+
+  // --- Check if Car is on Track ---
+  // (Using the road's polygon(s) from each track piece)
+  const carPoint = { x: carMesh.position.x, y: carMesh.position.z };
+  let onTrack = false;
+  for (let i = 0; i < placedPieces.length; i++) {
+    if (pointInPolygon(carPoint, placedPieces[i].polygon)) {
+      onTrack = true;
+      break;
+    }
+  }
+  
+  if (!onTrack) {
+    // Instead of stopping the car, bounce it off the wall.
+    // Reset to the previous position.
+    carMesh.position.copy(oldPosition);
+    // Reverse the velocity and reduce its magnitude to simulate energy loss.
+    carVelocity = -carVelocity * 0.5;
+    // Optionally, you could also adjust the car's angle slightly:
+    // carAngle += (Math.random() - 0.5) * 0.1;
+  }
+
+  // --- Update Camera to Follow the Car ---
+  const forward = new THREE.Vector3(Math.cos(-carAngle), 0, Math.sin(-carAngle));
+  camera.position.copy(carMesh.position).sub(forward.multiplyScalar(followDistance));
+  camera.position.y += followHeight;
+  camera.lookAt(carMesh.position);
+
+  renderer.render(scene, camera);
+  requestAnimationFrame(animate);
+}
+animate();
+
+      // --- Handle Window Resize ---
+      window.addEventListener('resize', () => {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+      });
+    </script>
+  </body>
+</html>
