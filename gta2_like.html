@@ -31,12 +31,19 @@
   const ctx = canvas.getContext("2d");
 
   const WORLD_SIZE = 3600;
-  const ROAD_GAP = 300;
-  const ROAD_WIDTH = 115;
+  const ROAD_GAP = 300; // Distance between city road center lines.
+  const ROAD_WIDTH = 115; // Width of each road corridor.
   const HALF_WORLD = WORLD_SIZE / 2;
   const SAFEHOUSE = { x: -HALF_WORLD + 220, y: -HALF_WORLD + 220, r: 90 };
-  const TARGET_PACKAGES = 6;
+  const REQUIRED_PACKAGES = 6;
   const GAME_TIME = 240;
+  const MAX_NORMAL_SPEED = 330;
+  const MAX_BOOST_SPEED = 470;
+  const BASE_TURN_RATE = 2.75;
+  const SPEED_TURN_DIVISOR = 210;
+  const MAX_SPEED_TURN_BONUS = 1.8;
+  const TRAFFIC_BASE_DAMAGE = 14;
+  const SPEED_DIFF_DAMAGE_MULTIPLIER = 0.025;
 
   function resize() {
     canvas.width = window.innerWidth;
@@ -69,6 +76,28 @@
     if (v < -HALF_WORLD) return HALF_WORLD;
     if (v > HALF_WORLD) return -HALF_WORLD;
     return v;
+  }
+
+  function colorWithAlpha(color, alpha) {
+    if (color.startsWith("#")) {
+      const hex = color.slice(1);
+      const normalized = hex.length === 3
+        ? hex.split("").map(ch => ch + ch).join("")
+        : hex;
+      if (normalized.length === 6) {
+        const r = parseInt(normalized.slice(0, 2), 16);
+        const g = parseInt(normalized.slice(2, 4), 16);
+        const b = parseInt(normalized.slice(4, 6), 16);
+        return `rgba(${r},${g},${b},${alpha})`;
+      }
+    }
+    if (color.startsWith("rgb(")) {
+      return color.replace("rgb(", "rgba(").replace(")", `,${alpha})`);
+    }
+    if (color.startsWith("rgba(")) {
+      return color.replace(/rgba\((\d+\s*,\s*\d+\s*,\s*\d+)\s*,[^)]*\)/, `rgba($1,${alpha})`);
+    }
+    return `rgba(255,160,60,${alpha})`;
   }
 
   function isRoadCoord(v) {
@@ -215,14 +244,14 @@
 
     const accel = 520;
     const friction = handbrake ? 0.9 : 0.97;
-    const maxSpeed = boost && p.boostCooldown <= 0 ? 470 : 330;
+    const maxSpeed = boost && p.boostCooldown <= 0 ? MAX_BOOST_SPEED : MAX_NORMAL_SPEED;
 
     p.speed += (forward - backward) * accel * dt;
     p.speed *= Math.pow(friction, dt * 60);
     p.speed = clamp(p.speed, -180, maxSpeed);
 
     const steer = (right - left);
-    p.angle += steer * (2.75 + Math.min(Math.abs(p.speed) / 210, 1.8)) * dt * (p.speed >= 0 ? 1 : -1);
+    p.angle += steer * (BASE_TURN_RATE + Math.min(Math.abs(p.speed) / SPEED_TURN_DIVISOR, MAX_SPEED_TURN_BONUS)) * dt * (p.speed >= 0 ? 1 : -1);
     p.shootCooldown = Math.max(0, p.shootCooldown - dt);
     p.boostCooldown = Math.max(0, p.boostCooldown - dt);
 
@@ -265,7 +294,7 @@
 
       const d = Math.hypot(t.x - state.player.x, t.y - state.player.y);
       if (d < t.radius + state.player.radius) {
-        state.player.health -= 14 * dt + Math.abs(state.player.speed - t.speed) * 0.025;
+        state.player.health -= TRAFFIC_BASE_DAMAGE * dt + Math.abs(state.player.speed - t.speed) * SPEED_DIFF_DAMAGE_MULTIPLIER;
         state.player.speed *= 0.96;
         state.player.wanted = clamp(state.player.wanted + 0.35 * dt, 0, 5);
       }
@@ -348,7 +377,7 @@
     }
 
     const p = state.player;
-    if (state.packages < TARGET_PACKAGES) {
+    if (state.packages < REQUIRED_PACKAGES) {
       if (Math.hypot(p.x - state.packageTarget.x, p.y - state.packageTarget.y) < p.radius + state.packageTarget.r + 8) {
         state.packages++;
         state.player.cash += 90;
@@ -449,7 +478,7 @@
     ctx.fill();
     ctx.stroke();
 
-    if (state.packages < TARGET_PACKAGES) {
+    if (state.packages < REQUIRED_PACKAGES) {
       const px = state.packageTarget.x - camX + canvas.width / 2;
       const py = state.packageTarget.y - camY + canvas.height / 2;
       ctx.fillStyle = "#ffd54d";
@@ -476,8 +505,7 @@
     }
     for (const e of state.explosions) {
       const t = e.life / e.maxLife;
-      ctx.fillStyle = e.color.replace(")", `,${t})`).replace("rgb", "rgba");
-      if (!ctx.fillStyle.includes("rgba")) ctx.fillStyle = `rgba(255,160,60,${t})`;
+      ctx.fillStyle = colorWithAlpha(e.color, t);
       ctx.beginPath();
       ctx.arc(e.x - camX + canvas.width / 2, e.y - camY + canvas.height / 2, 34 * (1 - t + 0.2), 0, Math.PI * 2);
       ctx.fill();
@@ -497,18 +525,18 @@
     ctx.fillText(`Wanted: ${"★".repeat(Math.floor(p.wanted + 0.5)).padEnd(5, "☆")}`, 28, 68);
     ctx.fillText(`Cash: $${p.cash}`, 28, 94);
     ctx.fillText(`Time: ${Math.ceil(state.timeLeft)}s`, 28, 120);
-    ctx.fillText(`Packages: ${state.packages}/${TARGET_PACKAGES}`, 190, 42);
+    ctx.fillText(`Packages: ${state.packages}/${REQUIRED_PACKAGES}`, 190, 42);
     ctx.fillText(`Score: ${state.score}`, 190, 68);
 
     const speed = Math.abs(p.speed);
     ctx.fillStyle = "#333";
     ctx.fillRect(190, 95, 160, 16);
     ctx.fillStyle = "#78d9ff";
-    ctx.fillRect(190, 95, clamp(speed / 470, 0, 1) * 160, 16);
+    ctx.fillRect(190, 95, clamp(speed / MAX_BOOST_SPEED, 0, 1) * 160, 16);
     ctx.strokeStyle = "#000";
     ctx.strokeRect(190, 95, 160, 16);
 
-    const objective = state.packages < TARGET_PACKAGES
+    const objective = state.packages < REQUIRED_PACKAGES
       ? "Objective: Collect packages."
       : "Objective: Return to safehouse.";
     ctx.fillStyle = "rgba(0,0,0,0.45)";
@@ -541,7 +569,7 @@
     ctx.arc(mapX(SAFEHOUSE.x), mapY(SAFEHOUSE.y), 4, 0, Math.PI * 2);
     ctx.fill();
 
-    if (state.packages < TARGET_PACKAGES) {
+    if (state.packages < REQUIRED_PACKAGES) {
       ctx.fillStyle = "#fd5";
       ctx.beginPath();
       ctx.arc(mapX(state.packageTarget.x), mapY(state.packageTarget.y), 3, 0, Math.PI * 2);
