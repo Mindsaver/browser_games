@@ -24,6 +24,25 @@
             cursor: pointer;
             margin-bottom: 10px;
         }
+        #sizeControls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+        #sizeControls label {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        #sizeControls input[type="number"] {
+            width: 70px;
+            padding: 6px 8px;
+            font-size: 16px;
+            border: 1px solid #aaa;
+            border-radius: 4px;
+        }
         #winModal {
             display: none;
             position: fixed;
@@ -53,7 +72,7 @@
                 height: auto !important;
                 border: none;
             }
-            button {
+            button, #sizeControls {
                 display: none;
             }
         }
@@ -61,6 +80,11 @@
 </head>
 <body>
     <canvas id="mazeCanvas"></canvas>
+    <div id="sizeControls">
+        <label>Width: <input type="number" id="canvasWidthInput" min="200" max="2000" step="10" value=""></label>
+        <label>Height: <input type="number" id="canvasHeightInput" min="200" max="2000" step="10" value=""></label>
+        <button id="applySizeButton">Apply</button>
+    </div>
     <button id="newLabyrinthButton">New Labyrinth</button>
     <button id="resetPlayerButton">Reset Player</button>
     <button id="printButton">Drucken</button>
@@ -76,6 +100,9 @@
         const printButton = document.getElementById('printButton');
         const winModal = document.getElementById('winModal');
         const newGameButton = document.getElementById('newGameButton');
+        const canvasWidthInput = document.getElementById('canvasWidthInput');
+        const canvasHeightInput = document.getElementById('canvasHeightInput');
+        const applySizeButton = document.getElementById('applySizeButton');
 
         let cols, rows, cellSize;
         let grid = [];
@@ -364,14 +391,15 @@
 
         function resizeCanvas() {
             canvas.width = window.innerWidth * 0.8;
-            canvas.height = window.innerHeight * 0.8;
+            canvas.height = window.innerHeight * 0.7;
             cellSize = Math.min(canvas.width, canvas.height) / 20;
+            // Sync input fields with current canvas size
+            canvasWidthInput.value = Math.round(canvas.width);
+            canvasHeightInput.value = Math.round(canvas.height);
             setup();
         }
 
         window.addEventListener('resize', resizeCanvas);
-
-        resizeCanvas();
 
         function drawPlayer() {
             ctx.fillStyle = 'blue';
@@ -454,7 +482,7 @@
                 case 'ArrowLeft':
                     handleMove('left');
                     break;
-				case 'l':
+                case 'l':
                     toggleSolution();
                     break;
             }
@@ -492,14 +520,21 @@
         canvas.addEventListener('click', handleClickOrTouch);
         canvas.addEventListener('touchstart', handleClickOrTouch, { passive: false });
 
-        function setCanvasSize() {
-            const screenWidth = window.innerWidth;
-            const screenHeight = window.innerHeight;
+        // Apply custom canvas size from input fields
+        applySizeButton.addEventListener('click', () => {
+            const w = parseInt(canvasWidthInput.value);
+            const h = parseInt(canvasHeightInput.value);
+            if (w >= 200 && h >= 200) {
+                canvas.width = w;
+                canvas.height = h;
+                cellSize = Math.min(canvas.width, canvas.height) / 20;
+                setup();
+            }
+        });
 
-            canvas.width = screenWidth * 0.8;
-            canvas.height = screenHeight * 0.7;
-            cellSize = Math.min(canvas.width, canvas.height) / 20;
-        }
+        // Allow pressing Enter in either input to apply
+        canvasWidthInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') applySizeButton.click(); });
+        canvasHeightInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') applySizeButton.click(); });
 
         newLabyrinthButton.addEventListener('click', setup);
         resetPlayerButton.addEventListener('click', () => {
@@ -545,8 +580,7 @@
         });
 
         // Initial canvas setup
-        setCanvasSize();
-        setup();
+        resizeCanvas();
     </script>
 </body>
 </html>
